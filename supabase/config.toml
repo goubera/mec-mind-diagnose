@@ -1,0 +1,4 @@
+project_id = "fytneakgfcxmkjxrsplm"
+
+[functions.analyze-diagnostic]
+verify_jwt = true
