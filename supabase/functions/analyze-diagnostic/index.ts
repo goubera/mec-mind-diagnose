@@ -98,7 +98,7 @@ Analyse les images fournies et donne ton diagnostic.`
 
     if (!aiResponse.ok) {
       const errorText = await aiResponse.text();
-      console.error('Erreur API IA:', aiResponse.status, errorText);
+      console.error('AI API error:', aiResponse.status);
       
       if (aiResponse.status === 429) {
         throw new Error('Trop de requêtes. Veuillez réessayer dans quelques instants.');
@@ -122,7 +122,7 @@ Analyse les images fournies et donne ton diagnostic.`
       const cleanContent = aiContent.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       aiAnalysis = JSON.parse(cleanContent);
     } catch (parseError) {
-      console.error('Erreur parsing JSON IA:', parseError);
+      console.error('AI JSON parsing failed');
       // Fallback: créer une structure de base
       aiAnalysis = {
         resume_probleme: "Erreur lors de l'analyse de la réponse de l'IA",
@@ -145,7 +145,7 @@ Analyse les images fournies et donne ton diagnostic.`
       .eq('id', sessionId);
 
     if (updateError) {
-      console.error('Erreur mise à jour session:', updateError);
+      console.error('Database update failed');
       throw updateError;
     }
 
@@ -157,7 +157,7 @@ Analyse les images fournies et donne ton diagnostic.`
     );
 
   } catch (error) {
-    console.error('Erreur dans analyze-diagnostic:', error);
+    console.error('Edge function error occurred');
     const errorMessage = error instanceof Error ? error.message : 'Erreur inconnue';
     return new Response(
       JSON.stringify({ error: errorMessage }),

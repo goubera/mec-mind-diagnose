@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Wrench } from "lucide-react";
+import { logError } from "@/lib/errorLogger";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -19,7 +20,7 @@ export default function Login() {
     try {
       await signIn(email, password);
     } catch (error) {
-      console.error(error);
+      logError(error, 'Login');
     } finally {
       setLoading(false);
     }

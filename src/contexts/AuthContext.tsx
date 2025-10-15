@@ -3,6 +3,7 @@ import { User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
+import { getUserFriendlyMessage, logError } from "@/lib/errorLogger";
 
 interface AuthContextType {
   user: User | null;
@@ -42,9 +43,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     if (error) {
+      logError(error, 'SignIn');
       toast({
         title: "Erreur de connexion",
-        description: error.message,
+        description: getUserFriendlyMessage(error),
         variant: "destructive",
       });
       throw error;
@@ -69,9 +71,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     if (error) {
+      logError(error, 'SignUp');
       toast({
         title: "Erreur d'inscription",
-        description: error.message,
+        description: getUserFriendlyMessage(error),
         variant: "destructive",
       });
       throw error;
@@ -88,9 +91,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { error } = await supabase.auth.signOut();
 
     if (error) {
+      logError(error, 'SignOut');
       toast({
         title: "Erreur de déconnexion",
-        description: error.message,
+        description: getUserFriendlyMessage(error),
         variant: "destructive",
       });
       throw error;

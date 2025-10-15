@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Wrench } from "lucide-react";
+import { logError } from "@/lib/errorLogger";
 
 export default function Register() {
   const [fullName, setFullName] = useState("");
@@ -20,7 +21,7 @@ export default function Register() {
     try {
       await signUp(email, password, fullName);
     } catch (error) {
-      console.error(error);
+      logError(error, 'Register');
     } finally {
       setLoading(false);
     }

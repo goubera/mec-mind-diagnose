@@ -10,6 +10,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Upload, X, Loader2 } from "lucide-react";
+import { logError } from "@/lib/errorLogger";
 
 export default function NewDiagnostic() {
   const [vin, setVin] = useState("");
@@ -162,10 +163,10 @@ export default function NewDiagnostic() {
 
       navigate(`/diagnostic/${session.id}`);
     } catch (error: any) {
-      console.error(error);
+      logError(error, 'NewDiagnostic');
       toast({
         title: "Erreur",
-        description: error.message || "Une erreur est survenue",
+        description: "Une erreur est survenue lors de la création du diagnostic",
         variant: "destructive",
       });
     } finally {
