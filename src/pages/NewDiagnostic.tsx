@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,7 @@ export default function NewDiagnostic() {
   const [testsAlreadyDone, setTestsAlreadyDone] = useState("");
   const [images, setImages] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
+  const [imageUrls, setImageUrls] = useState<string[]>([]); // URLs créées avec createObjectURL
   
   const { user } = useAuth();
   const { toast } = useToast();
@@ -38,6 +39,18 @@ export default function NewDiagnostic() {
   const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
   const MAX_FILES = 10;
   const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+
+  // Gérer le lifecycle des URLs d'images (prévenir les fuites mémoire)
+  useEffect(() => {
+    // Créer les URLs pour les nouvelles images
+    const newUrls = images.map(image => URL.createObjectURL(image));
+    setImageUrls(newUrls);
+
+    // Cleanup: révoquer les URLs quand le composant se démonte ou quand les images changent
+    return () => {
+      newUrls.forEach(url => URL.revokeObjectURL(url));
+    };
+  }, [images]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -451,7 +464,7 @@ export default function NewDiagnostic() {
                   {images.map((image, index) => (
                     <div key={index} className="relative group">
                       <img
-                        src={URL.createObjectURL(image)}
+                        src={imageUrls[index]}
                         alt={`Preview ${index + 1}`}
                         className="w-full h-32 object-cover rounded-lg"
                       />
