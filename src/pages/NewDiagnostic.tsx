@@ -11,6 +11,12 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Upload, X, Loader2 } from "lucide-react";
 import { logError } from "@/lib/errorLogger";
+import {
+  parseDtcCodes,
+  parseSymptoms,
+  parseTests,
+  validateVehicleData
+} from "@/lib/diagnosticValidation";
 
 export default function NewDiagnostic() {
   const [vin, setVin] = useState("");
@@ -99,12 +105,47 @@ export default function NewDiagnostic() {
 
     setLoading(true);
     try {
-      // 1. Créer ou récupérer le véhicule
+      // 0. Valider les données du véhicule
+      const vehicleValidation = validateVehicleData({
+        vin,
+        make,
+        model,
+        year: parseInt(year),
+        engineCode,
+      });
+
+      if (!vehicleValidation.success) {
+        toast({
+          title: "Données du véhicule invalides",
+          description: vehicleValidation.errors.join("\n"),
+          variant: "destructive",
+        });
+        setLoading(false);
+        return;
+      }
+
+      // 1. Parser et valider les données d'entrée
+      const parsedDtcCodes = parseDtcCodes(dtcCodes);
+      const parsedSymptoms = parseSymptoms(symptoms);
+      const parsedTests = parseTests(testsAlreadyDone);
+
+      // Vérifier qu'il y a au moins un symptôme
+      if (parsedSymptoms.length === 0) {
+        toast({
+          title: "Symptômes requis",
+          description: "Veuillez entrer au moins un symptôme",
+          variant: "destructive",
+        });
+        setLoading(false);
+        return;
+      }
+
+      // 2. Créer ou récupérer le véhicule
       let vehicleId: string;
       const { data: existingVehicle } = await supabase
         .from("vehicles")
         .select("id")
-        .eq("vin", vin)
+        .eq("vin", vehicleValidation.data.vin)
         .single();
 
       if (existingVehicle) {
@@ -113,11 +154,11 @@ export default function NewDiagnostic() {
         const { data: newVehicle, error: vehicleError } = await supabase
           .from("vehicles")
           .insert({
-            vin,
-            make,
-            model,
-            year: parseInt(year),
-            engine_code: engineCode,
+            vin: vehicleValidation.data.vin,
+            make: vehicleValidation.data.make,
+            model: vehicleValidation.data.model,
+            year: vehicleValidation.data.year,
+            engine_code: vehicleValidation.data.engineCode || null,
           })
           .select("id")
           .single();
@@ -126,7 +167,7 @@ export default function NewDiagnostic() {
         vehicleId = newVehicle.id;
       }
 
-      // 2. Upload des images
+      // 3. Upload des images
       const imageUrls: string[] = [];
       for (const image of images) {
         const fileName = `${user.id}/${Date.now()}-${image.name}`;
@@ -142,28 +183,6 @@ export default function NewDiagnostic() {
 
         imageUrls.push(publicUrl);
       }
-
-      // 3. Parser les codes défaut
-      const parsedDtcCodes = dtcCodes
-        .split("\n")
-        .filter(line => line.trim())
-        .map(line => {
-          const parts = line.split("-");
-          return {
-            code: parts[0].trim(),
-            description: parts[1]?.trim() || "",
-          };
-        });
-
-      // 4. Parser les symptômes
-      const parsedSymptoms = symptoms
-        .split("\n")
-        .filter(line => line.trim());
-
-      // 5. Parser les tests
-      const parsedTests = testsAlreadyDone
-        .split("\n")
-        .filter(line => line.trim());
 
       // 6. Créer la session de diagnostic
       const inputData = {
