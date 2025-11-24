@@ -69,8 +69,53 @@ serve(async (req) => {
 
   try {
     const { sessionId, vehicleData, symptoms, dtcCodes, testsAlreadyDone, imageUrls } = await req.json();
-    
+
     console.log("Analyse démarrée pour session:", sessionId);
+
+    // Vérifier l'authentification JWT
+    const authHeader = req.headers.get('authorization');
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({ error: 'Authorization header required' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Créer un client Supabase avec le JWT de l'utilisateur pour vérifier la propriété
+    const supabaseClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_ANON_KEY') ?? Deno.env.get('SUPABASE_PUBLISHABLE_KEY') ?? '',
+      {
+        global: {
+          headers: { Authorization: authHeader },
+        },
+      }
+    );
+
+    // Vérifier que l'utilisateur est propriétaire de la session
+    const { data: session, error: sessionError } = await supabaseClient
+      .from('diagnostic_sessions')
+      .select('user_id')
+      .eq('id', sessionId)
+      .single();
+
+    if (sessionError || !session) {
+      console.error('Session not found or access denied');
+      return new Response(
+        JSON.stringify({ error: 'Session not found or access denied' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Vérifier que l'utilisateur actuel est bien le propriétaire
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (!user || user.id !== session.user_id) {
+      console.error('User is not the owner of this session');
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized: You do not own this session' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) {
@@ -190,12 +235,13 @@ Analyse les images fournies et donne ton diagnostic.`
     }
 
     // Mise à jour de la session dans la base de données
-    const supabase = createClient(
+    // Utilisation de SERVICE_ROLE_KEY pour bypass RLS car on a déjà vérifié la propriété ci-dessus
+    const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    const { error: updateError } = await supabase
+    const { error: updateError } = await supabaseAdmin
       .from('diagnostic_sessions')
       .update({ ai_analysis: aiAnalysis })
       .eq('id', sessionId);
