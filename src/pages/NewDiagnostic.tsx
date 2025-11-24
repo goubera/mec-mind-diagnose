@@ -28,10 +28,64 @@ export default function NewDiagnostic() {
   const { toast } = useToast();
   const navigate = useNavigate();
 
+  // Configuration des limites de fichiers
+  const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+  const MAX_FILES = 10;
+  const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const newImages = Array.from(e.target.files);
-      setImages((prev) => [...prev, ...newImages]);
+
+      // Vérifier le nombre total d'images
+      const totalImages = images.length + newImages.length;
+      if (totalImages > MAX_FILES) {
+        toast({
+          title: "Trop d'images",
+          description: `Vous ne pouvez ajouter que ${MAX_FILES} images maximum. Vous avez déjà ${images.length} image(s).`,
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Valider chaque image
+      const validImages: File[] = [];
+      const errors: string[] = [];
+
+      for (const file of newImages) {
+        // Vérifier le type
+        if (!ALLOWED_TYPES.includes(file.type)) {
+          errors.push(`${file.name}: Format non supporté (JPG, PNG, WebP uniquement)`);
+          continue;
+        }
+
+        // Vérifier la taille
+        if (file.size > MAX_FILE_SIZE) {
+          const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+          errors.push(`${file.name}: Trop volumineux (${sizeMB}MB, max 5MB)`);
+          continue;
+        }
+
+        validImages.push(file);
+      }
+
+      // Afficher les erreurs s'il y en a
+      if (errors.length > 0) {
+        toast({
+          title: "Certaines images n'ont pas été ajoutées",
+          description: errors.join('\n'),
+          variant: "destructive",
+        });
+      }
+
+      // Ajouter les images valides
+      if (validImages.length > 0) {
+        setImages((prev) => [...prev, ...validImages]);
+        toast({
+          title: "Images ajoutées",
+          description: `${validImages.length} image(s) ajoutée(s) avec succès`,
+        });
+      }
     }
   };
 
@@ -300,7 +354,9 @@ export default function NewDiagnostic() {
           <Card>
             <CardHeader>
               <CardTitle>Photos</CardTitle>
-              <CardDescription>Ajoutez des photos pour aider l'IA dans son analyse</CardDescription>
+              <CardDescription>
+                Ajoutez des photos pour aider l'IA dans son analyse (Max {MAX_FILES} images, 5MB chacune)
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
@@ -310,12 +366,15 @@ export default function NewDiagnostic() {
                     <p className="text-sm text-muted-foreground">
                       Cliquez pour ajouter des images
                     </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      JPG, PNG ou WebP • Max 5MB par image • {images.length}/{MAX_FILES} images
+                    </p>
                   </div>
                 </Label>
                 <Input
                   id="images"
                   type="file"
-                  accept="image/*"
+                  accept="image/jpeg,image/jpg,image/png,image/webp"
                   multiple
                   onChange={handleImageChange}
                   className="hidden"
