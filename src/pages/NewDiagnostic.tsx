@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,12 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Upload, X, Loader2 } from "lucide-react";
 import { logError } from "@/lib/errorLogger";
+import {
+  parseDtcCodes,
+  parseSymptoms,
+  parseTests,
+  validateVehicleData
+} from "@/lib/diagnosticValidation";
 
 export default function NewDiagnostic() {
   const [vin, setVin] = useState("");
@@ -23,15 +29,82 @@ export default function NewDiagnostic() {
   const [testsAlreadyDone, setTestsAlreadyDone] = useState("");
   const [images, setImages] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
+  const [imageUrls, setImageUrls] = useState<string[]>([]); // URLs créées avec createObjectURL
   
   const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
+  // Configuration des limites de fichiers
+  const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+  const MAX_FILES = 10;
+  const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+
+  // Gérer le lifecycle des URLs d'images (prévenir les fuites mémoire)
+  useEffect(() => {
+    // Créer les URLs pour les nouvelles images
+    const newUrls = images.map(image => URL.createObjectURL(image));
+    setImageUrls(newUrls);
+
+    // Cleanup: révoquer les URLs quand le composant se démonte ou quand les images changent
+    return () => {
+      newUrls.forEach(url => URL.revokeObjectURL(url));
+    };
+  }, [images]);
+
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const newImages = Array.from(e.target.files);
-      setImages((prev) => [...prev, ...newImages]);
+
+      // Vérifier le nombre total d'images
+      const totalImages = images.length + newImages.length;
+      if (totalImages > MAX_FILES) {
+        toast({
+          title: "Trop d'images",
+          description: `Vous ne pouvez ajouter que ${MAX_FILES} images maximum. Vous avez déjà ${images.length} image(s).`,
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Valider chaque image
+      const validImages: File[] = [];
+      const errors: string[] = [];
+
+      for (const file of newImages) {
+        // Vérifier le type
+        if (!ALLOWED_TYPES.includes(file.type)) {
+          errors.push(`${file.name}: Format non supporté (JPG, PNG, WebP uniquement)`);
+          continue;
+        }
+
+        // Vérifier la taille
+        if (file.size > MAX_FILE_SIZE) {
+          const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+          errors.push(`${file.name}: Trop volumineux (${sizeMB}MB, max 5MB)`);
+          continue;
+        }
+
+        validImages.push(file);
+      }
+
+      // Afficher les erreurs s'il y en a
+      if (errors.length > 0) {
+        toast({
+          title: "Certaines images n'ont pas été ajoutées",
+          description: errors.join('\n'),
+          variant: "destructive",
+        });
+      }
+
+      // Ajouter les images valides
+      if (validImages.length > 0) {
+        setImages((prev) => [...prev, ...validImages]);
+        toast({
+          title: "Images ajoutées",
+          description: `${validImages.length} image(s) ajoutée(s) avec succès`,
+        });
+      }
     }
   };
 
@@ -44,35 +117,79 @@ export default function NewDiagnostic() {
     if (!user) return;
 
     setLoading(true);
+
+    // Tracker les ressources créées pour rollback en cas d'erreur
+    let createdVehicleId: string | null = null;
+    let uploadedFileNames: string[] = [];
+    let createdSessionId: string | null = null;
+    let isExistingVehicle = false;
+
     try {
-      // 1. Créer ou récupérer le véhicule
+      // 0. Valider les données du véhicule
+      const vehicleValidation = validateVehicleData({
+        vin,
+        make,
+        model,
+        year: parseInt(year),
+        engineCode,
+      });
+
+      if (!vehicleValidation.success) {
+        toast({
+          title: "Données du véhicule invalides",
+          description: vehicleValidation.errors.join("\n"),
+          variant: "destructive",
+        });
+        setLoading(false);
+        return;
+      }
+
+      // 1. Parser et valider les données d'entrée
+      const parsedDtcCodes = parseDtcCodes(dtcCodes);
+      const parsedSymptoms = parseSymptoms(symptoms);
+      const parsedTests = parseTests(testsAlreadyDone);
+
+      // Vérifier qu'il y a au moins un symptôme
+      if (parsedSymptoms.length === 0) {
+        toast({
+          title: "Symptômes requis",
+          description: "Veuillez entrer au moins un symptôme",
+          variant: "destructive",
+        });
+        setLoading(false);
+        return;
+      }
+
+      // 2. Créer ou récupérer le véhicule
       let vehicleId: string;
       const { data: existingVehicle } = await supabase
         .from("vehicles")
         .select("id")
-        .eq("vin", vin)
+        .eq("vin", vehicleValidation.data.vin)
         .single();
 
       if (existingVehicle) {
         vehicleId = existingVehicle.id;
+        isExistingVehicle = true;
       } else {
         const { data: newVehicle, error: vehicleError } = await supabase
           .from("vehicles")
           .insert({
-            vin,
-            make,
-            model,
-            year: parseInt(year),
-            engine_code: engineCode,
+            vin: vehicleValidation.data.vin,
+            make: vehicleValidation.data.make,
+            model: vehicleValidation.data.model,
+            year: vehicleValidation.data.year,
+            engine_code: vehicleValidation.data.engineCode || null,
           })
           .select("id")
           .single();
 
         if (vehicleError) throw vehicleError;
         vehicleId = newVehicle.id;
+        createdVehicleId = vehicleId; // Tracker pour rollback
       }
 
-      // 2. Upload des images
+      // 3. Upload des images
       const imageUrls: string[] = [];
       for (const image of images) {
         const fileName = `${user.id}/${Date.now()}-${image.name}`;
@@ -82,34 +199,14 @@ export default function NewDiagnostic() {
 
         if (uploadError) throw uploadError;
 
+        uploadedFileNames.push(fileName); // Tracker pour rollback
+
         const { data: { publicUrl } } = supabase.storage
           .from("diagnostic-images")
           .getPublicUrl(fileName);
 
         imageUrls.push(publicUrl);
       }
-
-      // 3. Parser les codes défaut
-      const parsedDtcCodes = dtcCodes
-        .split("\n")
-        .filter(line => line.trim())
-        .map(line => {
-          const parts = line.split("-");
-          return {
-            code: parts[0].trim(),
-            description: parts[1]?.trim() || "",
-          };
-        });
-
-      // 4. Parser les symptômes
-      const parsedSymptoms = symptoms
-        .split("\n")
-        .filter(line => line.trim());
-
-      // 5. Parser les tests
-      const parsedTests = testsAlreadyDone
-        .split("\n")
-        .filter(line => line.trim());
 
       // 6. Créer la session de diagnostic
       const inputData = {
@@ -131,6 +228,7 @@ export default function NewDiagnostic() {
         .single();
 
       if (sessionError) throw sessionError;
+      createdSessionId = session.id; // Tracker pour rollback
 
       // 7. Appeler l'IA pour l'analyse
       toast({
@@ -164,9 +262,43 @@ export default function NewDiagnostic() {
       navigate(`/diagnostic/${session.id}`);
     } catch (error: any) {
       logError(error, 'NewDiagnostic');
+
+      // ROLLBACK : Nettoyer les ressources créées en cas d'erreur
+      console.log("Erreur détectée, rollback des ressources créées...");
+
+      // 1. Supprimer la session de diagnostic si elle a été créée
+      if (createdSessionId) {
+        await supabase
+          .from("diagnostic_sessions")
+          .delete()
+          .eq("id", createdSessionId)
+          .then(() => console.log("Session supprimée lors du rollback"))
+          .catch((err) => logError(err, 'RollbackSession'));
+      }
+
+      // 2. Supprimer les images uploadées
+      if (uploadedFileNames.length > 0) {
+        await supabase.storage
+          .from("diagnostic-images")
+          .remove(uploadedFileNames)
+          .then(() => console.log(`${uploadedFileNames.length} images supprimées lors du rollback`))
+          .catch((err) => logError(err, 'RollbackImages'));
+      }
+
+      // 3. Supprimer le véhicule SEULEMENT s'il a été créé dans cette transaction
+      // (on ne supprime pas les véhicules existants)
+      if (createdVehicleId && !isExistingVehicle) {
+        await supabase
+          .from("vehicles")
+          .delete()
+          .eq("id", createdVehicleId)
+          .then(() => console.log("Véhicule supprimé lors du rollback"))
+          .catch((err) => logError(err, 'RollbackVehicle'));
+      }
+
       toast({
         title: "Erreur",
-        description: "Une erreur est survenue lors de la création du diagnostic",
+        description: "Une erreur est survenue lors de la création du diagnostic. Toutes les modifications ont été annulées.",
         variant: "destructive",
       });
     } finally {
@@ -300,7 +432,9 @@ export default function NewDiagnostic() {
           <Card>
             <CardHeader>
               <CardTitle>Photos</CardTitle>
-              <CardDescription>Ajoutez des photos pour aider l'IA dans son analyse</CardDescription>
+              <CardDescription>
+                Ajoutez des photos pour aider l'IA dans son analyse (Max {MAX_FILES} images, 5MB chacune)
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
@@ -310,12 +444,15 @@ export default function NewDiagnostic() {
                     <p className="text-sm text-muted-foreground">
                       Cliquez pour ajouter des images
                     </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      JPG, PNG ou WebP • Max 5MB par image • {images.length}/{MAX_FILES} images
+                    </p>
                   </div>
                 </Label>
                 <Input
                   id="images"
                   type="file"
-                  accept="image/*"
+                  accept="image/jpeg,image/jpg,image/png,image/webp"
                   multiple
                   onChange={handleImageChange}
                   className="hidden"
@@ -327,7 +464,7 @@ export default function NewDiagnostic() {
                   {images.map((image, index) => (
                     <div key={index} className="relative group">
                       <img
-                        src={URL.createObjectURL(image)}
+                        src={imageUrls[index]}
                         alt={`Preview ${index + 1}`}
                         className="w-full h-32 object-cover rounded-lg"
                       />
