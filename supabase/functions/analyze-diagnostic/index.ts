@@ -1,14 +1,70 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+// Liste des origines autorisées
+const ALLOWED_ORIGINS = [
+  'https://lovable.dev',
+  'https://lovable.app',
+  /https:\/\/.*\.lovable\.dev$/,  // Tous les sous-domaines lovable.dev
+  /https:\/\/.*\.lovable\.app$/,  // Tous les sous-domaines lovable.app
+];
+
+// Ajouter les origines custom depuis les variables d'environnement
+const customOrigin = Deno.env.get('ALLOWED_ORIGIN');
+if (customOrigin) {
+  ALLOWED_ORIGINS.push(customOrigin);
+}
+
+/**
+ * Vérifie si une origine est autorisée
+ */
+function isOriginAllowed(origin: string | null): boolean {
+  if (!origin) return false;
+
+  return ALLOWED_ORIGINS.some(allowed => {
+    if (typeof allowed === 'string') {
+      return origin === allowed;
+    }
+    // Si c'est une RegExp
+    return allowed.test(origin);
+  });
+}
+
+/**
+ * Génère les headers CORS appropriés basés sur l'origine de la requête
+ */
+function getCorsHeaders(origin: string | null): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Max-Age': '86400', // 24 heures
+  };
+
+  // Si l'origine est autorisée, on l'ajoute au header
+  if (isOriginAllowed(origin)) {
+    headers['Access-Control-Allow-Origin'] = origin!;
+  }
+
+  return headers;
+}
 
 serve(async (req) => {
+  const origin = req.headers.get('origin');
+  const corsHeaders = getCorsHeaders(origin);
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
+  }
+
+  // Vérifier que l'origine est autorisée pour les requêtes non-OPTIONS
+  if (!isOriginAllowed(origin)) {
+    return new Response(
+      JSON.stringify({ error: 'Origin not allowed' }),
+      {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' }
+      }
+    );
   }
 
   try {
