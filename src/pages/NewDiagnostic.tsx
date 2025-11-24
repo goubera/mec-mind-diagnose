@@ -104,6 +104,13 @@ export default function NewDiagnostic() {
     if (!user) return;
 
     setLoading(true);
+
+    // Tracker les ressources créées pour rollback en cas d'erreur
+    let createdVehicleId: string | null = null;
+    let uploadedFileNames: string[] = [];
+    let createdSessionId: string | null = null;
+    let isExistingVehicle = false;
+
     try {
       // 0. Valider les données du véhicule
       const vehicleValidation = validateVehicleData({
@@ -150,6 +157,7 @@ export default function NewDiagnostic() {
 
       if (existingVehicle) {
         vehicleId = existingVehicle.id;
+        isExistingVehicle = true;
       } else {
         const { data: newVehicle, error: vehicleError } = await supabase
           .from("vehicles")
@@ -165,6 +173,7 @@ export default function NewDiagnostic() {
 
         if (vehicleError) throw vehicleError;
         vehicleId = newVehicle.id;
+        createdVehicleId = vehicleId; // Tracker pour rollback
       }
 
       // 3. Upload des images
@@ -176,6 +185,8 @@ export default function NewDiagnostic() {
           .upload(fileName, image);
 
         if (uploadError) throw uploadError;
+
+        uploadedFileNames.push(fileName); // Tracker pour rollback
 
         const { data: { publicUrl } } = supabase.storage
           .from("diagnostic-images")
@@ -204,6 +215,7 @@ export default function NewDiagnostic() {
         .single();
 
       if (sessionError) throw sessionError;
+      createdSessionId = session.id; // Tracker pour rollback
 
       // 7. Appeler l'IA pour l'analyse
       toast({
@@ -237,9 +249,43 @@ export default function NewDiagnostic() {
       navigate(`/diagnostic/${session.id}`);
     } catch (error: any) {
       logError(error, 'NewDiagnostic');
+
+      // ROLLBACK : Nettoyer les ressources créées en cas d'erreur
+      console.log("Erreur détectée, rollback des ressources créées...");
+
+      // 1. Supprimer la session de diagnostic si elle a été créée
+      if (createdSessionId) {
+        await supabase
+          .from("diagnostic_sessions")
+          .delete()
+          .eq("id", createdSessionId)
+          .then(() => console.log("Session supprimée lors du rollback"))
+          .catch((err) => logError(err, 'RollbackSession'));
+      }
+
+      // 2. Supprimer les images uploadées
+      if (uploadedFileNames.length > 0) {
+        await supabase.storage
+          .from("diagnostic-images")
+          .remove(uploadedFileNames)
+          .then(() => console.log(`${uploadedFileNames.length} images supprimées lors du rollback`))
+          .catch((err) => logError(err, 'RollbackImages'));
+      }
+
+      // 3. Supprimer le véhicule SEULEMENT s'il a été créé dans cette transaction
+      // (on ne supprime pas les véhicules existants)
+      if (createdVehicleId && !isExistingVehicle) {
+        await supabase
+          .from("vehicles")
+          .delete()
+          .eq("id", createdVehicleId)
+          .then(() => console.log("Véhicule supprimé lors du rollback"))
+          .catch((err) => logError(err, 'RollbackVehicle'));
+      }
+
       toast({
         title: "Erreur",
-        description: "Une erreur est survenue lors de la création du diagnostic",
+        description: "Une erreur est survenue lors de la création du diagnostic. Toutes les modifications ont été annulées.",
         variant: "destructive",
       });
     } finally {
